@@ -114,6 +114,17 @@ h1,h2,h3{text-wrap:balance;margin:0;line-height:1.35}
 .envrow b{display:block;font-size:14.5px}
 .envrow div span{font-size:13.5px;color:var(--muted)}
 
+/* ---------- 자료 만들기 ---------- */
+.tplgrid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+.tplgrid .step{padding:12px 14px}
+.tplgrid .step b{font-size:15px}
+.step[aria-pressed="true"]{border-color:var(--accent);background:var(--accent-soft)}
+.step[aria-pressed="true"] b{color:var(--accent)}
+.chip:disabled{opacity:.45;cursor:not-allowed}
+.origbox{display:flex;gap:12px;align-items:center;flex-wrap:wrap;border:1px solid var(--line);border-radius:10px;padding:12px 14px;background:var(--surface)}
+.origbox .ic{width:38px;height:46px;border-radius:6px;background:var(--accent-soft);color:var(--accent);display:grid;place-items:center;font-family:var(--f-mono);font-size:11px;font-weight:600;flex:none}
+.origbox .nm{font-weight:500;overflow-wrap:anywhere}
+
 /* ---------- filters / rails ---------- */
 .sgrid{display:grid;grid-template-columns:292px minmax(0,1fr);gap:22px;align-items:start}
 .rail{display:flex;flex-direction:column;gap:12px;min-width:0;position:sticky;top:110px}
@@ -291,6 +302,7 @@ textarea.ansfield{min-height:120px;resize:vertical;line-height:1.75}
   .hero{grid-template-columns:1fr}
   .steps{grid-template-columns:repeat(2,minmax(0,1fr))}
   .what{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .tplgrid{grid-template-columns:repeat(2,minmax(0,1fr))}
 }
 @media (max-width:620px){
   .steps,.what{grid-template-columns:1fr}
@@ -311,6 +323,7 @@ textarea.ansfield{min-height:120px;resize:vertical;line-height:1.75}
   <nav class="nav" id="nav" aria-label="화면 이동">
     <button type="button" data-go="home">홈</button>
     <button type="button" data-go="lib">자료함<span class="n" id="navLib"></span></button>
+    <button type="button" data-go="make">자료 만들기<span class="n" id="navMake"></span></button>
     <button type="button" data-go="quiz">퀴즈<span class="n" id="navQuiz"></span></button>
     <button type="button" data-go="wrong">오답노트<span class="n" id="navWrong"></span></button>
     <button type="button" data-go="cards">암기카드<span class="n" id="navCards"></span></button>
@@ -385,9 +398,11 @@ textarea.ansfield{min-height:120px;resize:vertical;line-height:1.75}
 <div id="v-wrong" hidden><div class="page mid" id="wrongPage"></div></div>
 <div id="v-cards" hidden><div class="page mid" id="cardsPage"></div></div>
 <div id="v-hub" hidden><div class="page mid" id="hubPage"></div></div>
+<div id="v-make" hidden><div class="page mid" id="makePage"></div></div>
 
 <input type="file" id="fileIn" multiple accept=".pdf,.pptx,.docx,.txt,.md,.markdown,.csv,.tsv,.json,.html,.htm,.tex,.srt,.vtt,.png,.jpg,.jpeg,.webp,.gif" hidden>
-<input type="file" id="jsonIn" accept=".json" hidden>
+<input type="file" id="jsonIn" accept=".json,.zip" hidden>
+<input type="file" id="origIn" hidden>
 
 <div class="modal" id="aiBridge" hidden>
   <div class="dialog lg">
@@ -650,7 +665,7 @@ const aiErrText=e=>{const c=e&&e.code;
     c==="invalid_json"?"답 형식이 깨졌어요. 다시 시도해 주세요":c==="cancelled"?"취소했어요":errMsg(e);};
 
 /* ---------- 저장: 허브와 같은 IndexedDB(research-hub-more) 또는 claude 클라우드 ---------- */
-const COLS=["mat","txt","quiz","att","wrong","course"];
+const COLS=["mat","txt","quiz","att","wrong","course","doc"];
 let idbP=null;
 function idb(){return idbP||(idbP=new Promise((res,rej)=>{
   let r;try{r=indexedDB.open("research-hub-more",1);}catch(e){return rej(e);}
@@ -702,7 +717,7 @@ async function loadText(m){
 }
 
 /* ---------- 상태 ---------- */
-const S={view:"home",loaded:false,mats:[],quizzes:[],atts:[],wrong:[],courses:[],
+const S={view:"home",loaded:false,mats:[],quizzes:[],atts:[],wrong:[],courses:[],docs:[],docId:null,docEdit:false,mk:null,fileHave:null,
   sel:new Set(),matId:null,matTab:"notes",texts:{},jobs:{},stream:{},chat:{},
   libQ:"",libSort:"added",libCourse:"all",libWeek:"all",libState:"all",
   play:null,result:null,cardIdx:{},cardFlip:false,deck:null,hubPapers:null,hubMsg:""};
@@ -951,7 +966,9 @@ function handleFiles(files){
         const r=await extract(f,msg=>setJob(m.id,msg));
         const text=(r.text||"").trim();if(!text)throw{message:"읽을 수 있는 글자가 없어요"};
         m.chars=text.length;m.pages=r.pages||null;m.ocr=!!r.ocr;
-        setJob(m.id,"저장 중");await saveText(m,text);await Store.put("mat",m);
+        setJob(m.id,"원본 보관 중");await archiveOriginal(m,f);
+        setJob(m.id,"저장 중");await saveText(m,text);await Store.put("mat",m);if(S.fileHave&&m.file)S.fileHave.add(m.id);
+        if(m.fileErr)toast(`${f.name}: ${m.fileErr}`,4600);
         if(r.note)toast(r.note);
         setJob(m.id,null);softRender();
         if(cfg.autoNotes&&AI.auto)await genNotes(m,true);
@@ -972,6 +989,7 @@ async function deleteMat(id){
   const m=getMat(id);if(!m)return;
   if(!await confirmBox(`「${m.title}」을(를) 삭제할까요? 노트·카드도 함께 지워져요.`,"삭제"))return;
   try{await Store.del("mat",id);for(let i=0;i<(m.chunks||0);i++)await Store.del("txt",id+"__"+i);}catch(e){toast(errMsg(e));}
+  FileStore.del(id).catch(()=>{});if(S.fileHave)S.fileHave.delete(id);
   S.mats=S.mats.filter(x=>x.id!==id);S.sel.delete(id);delete S.texts[id];
   if(S.matId===id){S.matId=null;S.view="lib";}
   render();
@@ -1360,15 +1378,11 @@ async function importHubPapers(ids){
 }
 async function importBackupJson(file){
   try{
+    if(/\.zip$/i.test(file.name||"")){const bx=busyBox("백업 풀어서 넣는 중…");try{await importBackupZip(file);}finally{bx.close();}return;}
     const o=JSON.parse(await file.text());
-    if(o&&(o.mats||o.quizzes||o.wrong)){ /* 학습실 백업 */
-      let n=0;
-      for(const m of (o.mats||[])){if(!m||!m.id)continue;S.mats=S.mats.filter(x=>x.id!==m.id);S.mats.unshift(m);await Store.put("mat",m);n++;}
-      for(const t of (o.txts||[])){if(t&&t.id)await Store.put("txt",t);}
-      for(const q of (o.quizzes||[])){if(q&&q.id){S.quizzes=S.quizzes.filter(x=>x.id!==q.id);S.quizzes.unshift(q);await Store.put("quiz",q);}}
-      for(const w of (o.wrong||[])){if(w&&w.id){S.wrong=S.wrong.filter(x=>x.id!==w.id);S.wrong.unshift(w);await Store.put("wrong",w);}}
-      for(const a of (o.atts||[])){if(a&&a.id){S.atts=S.atts.filter(x=>x.id!==a.id);S.atts.unshift(a);await Store.put("att",a);}}
-      S.texts={};toast(`학습실 백업에서 자료 ${n}건을 가져왔어요`);render();return;}
+    if(o&&(o.mats||o.quizzes||o.wrong||o.docs)){ /* 학습실 백업 */
+      const r=await restoreBackupData(o,null);
+      toast(`학습실 백업에서 자료 ${r.n}건을 가져왔어요${(o.mats||[]).some(m=>m.file)?" — 원본 파일은 .zip 백업에만 들어 있어요":""}`,5000);render();return;}
     const papers=(o&&o.papers)||[];
     if(!papers.length)throw{message:"파일에서 논문 목록(papers)을 찾지 못했어요"};
     S.hubPapers=papers.filter(p=>p&&p.title&&!p.derived);S.hubMsg="";S.view="hub";
@@ -1380,13 +1394,630 @@ function exportBackup(){
     const txts=[];
     for(const m of S.mats)for(let i=0;i<(m.chunks||0);i++){const d=await Store.get("txt",m.id+"__"+i);if(d)txts.push(d);}
     download(`전공학습실-백업-${fmtDate(Date.now()).replace(/\./g,"")}.json`,
-      JSON.stringify({app:"study-room",v:1,at:Date.now(),mats:S.mats,txts,quizzes:S.quizzes,atts:S.atts,wrong:S.wrong},null,1),"application/json");
-    toast("백업 파일을 내려받았어요");
+      JSON.stringify({app:"study-room",v:2,at:Date.now(),mats:S.mats,txts,quizzes:S.quizzes,atts:S.atts,wrong:S.wrong,docs:S.docs},null,1),"application/json");
   })();
 }
 
+/* ===================== 자료 만들기 (수업·과제 자료) ===================== */
+const TPL={
+  lecture:{name:"강연·수업 보고서",desc:"A4 1장 · 강의내용 및 배운점 / 고찰",len:"one",tone:"report",cite:false,human:true,needMemo:true,
+    memoLabel:"내 메모 — 강연을 들으며 적은 것 (이걸 중심으로 직접 쓴 글처럼 재구성해요)",
+    topicPh:"예: 11주차 초청강연 — 나노의약품의 신장 표적 전달 (OO제약 김OO 박사)",
+    rule:`형식(이 두 파트만, 제목 그대로):
+# (강연 제목) — (연사·소속, 알 수 있으면)
+## 강의내용 및 배운점
+강연의 흐름을 따라 핵심 내용을 3~4개 문단으로 정리하고, 그 과정에서 새로 알게 된 점을 자연스럽게 녹이세요.
+## 고찰
+강연 내용을 내 전공·연구와 연결해 2~3개 문단으로 생각을 전개하세요. 동의하는 점, 의문, 내 연구에 적용할 수 있는 점, 한계를 구체적으로.
+- 반드시 A4 한 장 안에 들어가야 합니다(공백 포함 1,400~1,700자). 넘치면 줄이세요.
+- 내 메모에 없는 개인 경험·감정·대화를 지어내지 마세요.`},
+  report:{name:"과제 리포트",desc:"서론 · 본론 · 결론 · 참고자료",len:"two",tone:"report",cite:true,human:true,
+    memoLabel:"내 생각·메모 (선택 — 주장의 방향이나 꼭 넣을 내용)",topicPh:"예: 신장 표적 약물전달 전략의 현재와 한계를 논하시오",
+    rule:`형식:
+# 제목
+## 1. 서론
+배경과 문제 제기, 이 글의 목적과 구성.
+## 2. 본론
+2.1, 2.2 …의 소제목으로 나눠 논증하세요. 주장마다 근거를 대고, 반론이나 한계도 다루세요.
+## 3. 결론
+요약, 시사점, 남은 과제.
+## 참고자료
+아래 자료 목록의 서지만, 본문에 쓴 순서대로 번호를 매겨 쓰세요.`},
+  slides:{name:"발표 자료",desc:"슬라이드별 제목 · 핵심 · 발표자 노트 → PPTX",len:"s12",tone:"bullet",cite:false,human:false,
+    memoLabel:"내 생각·메모 (선택 — 강조하고 싶은 메시지, 발표 시간 등)",topicPh:"예: 랩미팅 발표 — AKI 모델에서 초분자 나노입자 효능",
+    rule:`각 슬라이드를 정확히 이 형식으로 쓰세요:
+# 발표 제목
+## 슬라이드 1. 슬라이드 제목
+- 핵심 3~5개 (한 줄 15~40자, 문장보다 구)
+> 발표자 노트: 이 슬라이드에서 말할 내용 2~4문장
+- 첫 슬라이드는 표지(발표 제목과 부제·발표자 자리), 마지막은 요약 또는 Q&A.
+- 그림·그래프가 필요한 곳은 글머리표 하나를 [그림: 무엇을 보여줄지]로 쓰세요.
+- 출처가 필요하면 마지막 앞에 '참고자료' 슬라이드를 두고 아래 자료 목록의 서지만 쓰세요.`},
+  summary:{name:"한 장 요약본",desc:"시험 직전 A4 한 장 정리",len:"one",tone:"bullet",cite:true,human:false,
+    memoLabel:"내 메모 (선택 — 교수님이 강조한 것, 시험 범위)",topicPh:"예: 중간고사 범위 4~7주차",
+    rule:`A4 한 장짜리 시험 대비 요약본:
+# 제목
+## 핵심 개념 — 개념마다 한두 줄 정의
+## 기전·흐름 — 단계는 → 로 이어서
+## 비교표 — | 항목 | A | B | 형식의 표 하나 이상
+## 꼭 외울 것 — 수치·용어·분류
+## 자주 틀리는 함정
+- 군더더기 없이, 표와 글머리표를 적극적으로.`},
+  journal:{name:"논문 발제",desc:"배경 · 주장 · 방법 · 결과 · 비판 · 토론 질문",len:"two",tone:"bullet",cite:true,human:false,
+    memoLabel:"내 생각·메모 (선택 — 비판하고 싶은 점, 내 연구와의 연결)",topicPh:"예: 저널클럽 발제 — 2025 Nature Nanotechnology 신장 표적 나노입자",
+    rule:`형식:
+# 논문 제목 (저널, 연도)
+## 연구 배경과 질문
+## 핵심 주장·가설
+## 방법 — 실험 설계, 모델, 분석
+## 주요 결과 — Figure별로 (Fig. 1, Fig. 2 …), 무엇을 보였는지
+## 의의
+## 비판적 검토 — 방법의 한계, 다른 해석 가능성, 추가로 필요한 실험
+## 토론 질문 — 5개`},
+  review:{name:"문헌 리뷰",desc:"여러 자료를 주제로 엮고 출처 표시",len:"three",tone:"report",cite:true,human:true,
+    memoLabel:"내 생각·메모 (선택 — 리뷰의 관점, 강조할 흐름)",topicPh:"예: 급성신장손상 표적 나노의약품 연구 동향",
+    rule:`형식:
+# 제목
+## 서론 — 범위, 검토 기준, 왜 이 주제인지
+## 주제별 종합 — 자료를 하나씩 나열하지 말고, 주제(접근법·기전·대상)로 묶어 비교하며 쓰세요. 소제목은 ### 로.
+## 비교표 — | 자료 | 대상·방법 | 핵심 결과 | 한계 |
+## 연구 공백과 향후 방향
+## 참고자료 — 아래 자료 목록의 서지만, 번호 순`},
+  lab:{name:"실험 보고서",desc:"목적 · 원리 · 재료와 방법 · 결과 · 고찰",len:"two",tone:"report",cite:true,human:true,needMemo:true,
+    memoLabel:"실험 메모·데이터 (결과는 여기 적힌 것만 써요 — 수치, 관찰, 조건)",topicPh:"예: BCA assay로 나노입자 단백질 정량",
+    rule:`형식:
+# 실험 제목
+## 1. 목적
+## 2. 이론 및 원리
+## 3. 재료 및 방법 — 시약·기기, 그리고 번호를 매긴 단계별 절차
+## 4. 결과 — 메모에 적힌 데이터·관찰만 쓰세요. 표로 정리하세요. 메모에 없는 수치는 절대 만들지 말고 [데이터 입력] 자리표시를 두세요.
+## 5. 고찰 — 결과 해석, 이론과 비교, 오차 원인, 개선점
+## 6. 결론
+## 참고자료`},
+  free:{name:"직접 지시",desc:"양식과 내용을 내가 정하기",len:"one",tone:"report",cite:true,human:true,
+    memoLabel:"내 메모 (선택)",topicPh:"예: 수업 토론용 찬반 논거 정리, 교수님께 보낼 질문 정리 등",
+    rule:`아래 '요청'에 적힌 양식과 목적을 그대로 따르세요. 양식 지시가 없으면 # 제목과 ## 소제목으로 짜임새 있게 쓰세요.`}
+};
+const LEN={half:{l:"A4 반 장",c:"공백 포함 700~900자",n:900},one:{l:"A4 1장",c:"공백 포함 1,400~1,800자",n:1800},
+  two:{l:"A4 2장",c:"공백 포함 3,000~3,600자",n:3600},three:{l:"A4 3장",c:"공백 포함 4,600~5,400자",n:5400},
+  five:{l:"A4 5장",c:"공백 포함 7,800~9,000자",n:9000},
+  s8:{l:"8장",c:"슬라이드 8장",slides:8},s12:{l:"12장",c:"슬라이드 12장",slides:12},s16:{l:"16장",c:"슬라이드 16장",slides:16},s20:{l:"20장",c:"슬라이드 20장",slides:20}};
+const TONE={report:{l:"보고서체",c:"보고서체(~다, ~이다)"},bullet:{l:"개조식",c:"개조식(~함, ~임, 명사형 종결)"},polite:{l:"경어체",c:"경어체(~습니다, ~입니다)"}};
+const LANG={ko:{l:"한국어",c:"한국어로 쓰고, 전문용어는 처음 나올 때 한국어(English)로 병기"},en:{l:"English",c:"영어(학술적 문체)로 쓰기"},
+  both:{l:"국문+영문 초록",c:"한국어로 쓰고, 맨 끝에 '## Abstract' 절로 영문 요약 150단어를 덧붙이기"}};
+
+function mkDefaults(t){const T=TPL[t]||TPL.lecture;return {tpl:t,len:T.len,tone:T.tone,lang:"ko"};}
+function mkState(){return S.mk||(S.mk=Object.assign({ids:new Set(),topic:"",memo:"",extra:""},mkDefaults("lecture")));}
+
+/* 글자 수: 마크다운 표시를 걷어낸 본문 기준 */
+function plainText(md){
+  return String(md||"").replace(/\r/g,"").split("\n").map(l=>{
+    if(/^\s*\|[\s:|-]+\|\s*$/.test(l))return "";
+    return l.replace(/^#{1,6}\s+/,"").replace(/^\s*>\s?/,"").replace(/^\s*(?:[-*•])\s+/,"• ")
+      .replace(/\*\*([^*]+)\*\*/g,"$1").replace(/(^|[^*])\*([^*\s][^*]*)\*/g,"$1$2").replace(/`([^`]+)`/g,"$1")
+      .replace(/==([^=]+)==/g,"$1").replace(/\[([^\]]+)\]\((https?:[^)]+)\)/g,"$1")
+      .replace(/^\s*\|(.*)\|\s*$/,(m,x)=>x.split("|").map(c=>c.trim()).join("  "));
+  }).join("\n").replace(/\n{3,}/g,"\n\n").trim();
+}
+function countChars(md){const t=plainText(md);return {all:t.replace(/\n/g,"").length,noSpace:t.replace(/\s/g,"").length};}
+function docTitle(md,fallback){const m=String(md||"").match(/^#\s+(.+)$/m);return (m?m[1]:fallback||"제목 없음").replace(/\*\*/g,"").trim().slice(0,90);}
+
+function buildMakePrompt(f,ctx,mats){
+  const T=TPL[f.tpl],L=LEN[f.len]||LEN.one,TO=TONE[f.tone]||TONE.report,LA=LANG[f.lang]||LANG.ko;
+  const lines=[
+    `당신은 대학원 전공 수업의 과제를 돕는 조교입니다.${cfg.course?` 학생의 전공·수업 맥락: ${cfg.course}.`:""} 아래 지시에 맞춰 「${T.name}」 초안을 마크다운으로 쓰세요.`,
+    "",
+    f.topic?`요청: ${f.topic}`:"",
+    f.extra?`추가 요구사항(교수님 지시 등): ${f.extra}`:"",
+    "",
+    T.rule,
+    "",
+    "공통 규칙:",
+    `- 분량: ${L.c}.${L.slides?"":" 이 범위를 지키세요."}`,
+    `- 문체: ${TO.c}.`,
+    `- 언어: ${LA.c}.`,
+    T.cite&&mats.length?"- 자료에서 가져온 내용은 문장 끝에 (자료N) 또는 (자료N p.M)으로 출처를 남기세요.":"- 본문에 (자료N) 같은 출처 표시는 넣지 마세요.",
+    "- 자료가 없거나 부족한 부분은 일반적인 전공 지식으로 쓰되, 확인할 수 없는 수치·인용문·논문 제목·저자는 절대 지어내지 마세요.",
+    mats.length?"- 참고문헌·참고자료에는 아래 자료 목록에 있는 것만 쓰세요. 새 문헌을 만들어 넣지 마세요."
+      :"- 근거 자료가 주어지지 않았어요. 참고문헌을 새로 지어내지 말고, 참고자료 절이 필요한 양식이면 그 자리에 [참고문헌 입력]만 두세요.",
+    T.human?"- 학생이 직접 쓴 글처럼 문단이 자연스럽게 이어지게 쓰세요. 글머리표는 꼭 필요한 곳에만. '~에 대해 살펴보겠다', '결론적으로', '다양한', '중요한 역할을 한다', '이를 통해 ~을 알 수 있었다' 같은 상투적인 말을 반복하지 마세요.":"",
+    f.memo?"- 아래 '내 메모'가 이 글의 뼈대입니다. 메모의 내용과 관점을 살리고, 메모에 없는 개인 경험은 지어내지 마세요.":"",
+    "- 인사말이나 설명 없이 본문만 출력하세요.",
+  ];
+  if(f.memo)lines.push("","<내 메모>",f.memo,"</내 메모>");
+  if(mats.length){
+    lines.push("","자료 목록:",...mats.map((m,i)=>`${i+1}. ${m.title}${m.meta?` — ${m.meta}`:""}`),"",ctx);
+  }
+  let out=lines.filter(x=>x!==false&&x!=null).join("\n").replace(/\n{3,}/g,"\n\n");
+  if(!mats.length)out=out.replace(/아래 자료 목록의 서지만/g,"[참고문헌 입력] 자리표시만").replace(/아래 자료 목록에 있는 것만/g,"새로 지어내지 말고 [참고문헌 입력] 자리표시만");
+  return out;
+}
+
+async function generateDoc(){
+  const f=mkState(),T=TPL[f.tpl];
+  const ids=[...f.ids].filter(getMat),mats=ids.map(getMat);
+  if(!f.topic.trim()&&!f.memo.trim()&&!mats.length){toast("주제, 메모, 자료 중 하나는 있어야 만들 수 있어요");return;}
+  if(T.needMemo&&!f.memo.trim()&&!mats.length){toast(f.tpl==="lab"?"실험 메모나 데이터를 넣어 주세요 — 결과를 지어내지 않으려면 꼭 필요해요":"강연 메모나 자료를 넣어 주세요");return;}
+  const d={id:uid("d"),tpl:f.tpl,title:f.topic.trim().slice(0,90)||T.name,matIds:ids,topic:f.topic,memo:f.memo,extra:f.extra,
+    opts:{len:f.len,tone:f.tone,lang:f.lang},text:"",createdAt:Date.now(),updatedAt:Date.now(),versions:[]};
+  S.docs.unshift(d);S.docId=d.id;S.docEdit=false;S.view="make";
+  setJob(d.id,mats.length?"자료 읽는 중…":"쓰는 중…");render();window.scrollTo(0,0);
+  try{
+    const ctx=mats.length?await buildContext(mats,70000):"";
+    setJob(d.id,`${T.name} 쓰는 중…`);
+    const text=await AI.text(buildMakePrompt(f,ctx,mats),{cache:false,onText:t=>{
+      S.stream[d.id]=t;const el=$("#docBody");if(el&&S.docId===d.id&&!S.docEdit)el.innerHTML=md(t);paintCount(t,d);}});
+    d.text=text.trim();d.title=docTitle(d.text,d.title);d.updatedAt=Date.now();delete S.stream[d.id];
+    await Store.put("doc",d);toast(`${T.name}를 만들었어요`);
+  }catch(e){delete S.stream[d.id];
+    if(!d.text){S.docs=S.docs.filter(x=>x!==d);S.docId=null;}
+    toast("만들지 못했어요: "+aiErrText(e),4600);}
+  setJob(d.id,null);softRender();
+}
+async function reviseDoc(d,instr){
+  if(!instr.trim())return;
+  const T=TPL[d.tpl]||TPL.free,L=LEN[(d.opts||{}).len];
+  const mats=(d.matIds||[]).map(getMat).filter(Boolean);
+  setJob(d.id,"고쳐 쓰는 중…");S.docEdit=false;softRender();
+  try{
+    const ctx=mats.length?await buildContext(mats,30000):"";
+    const prev=d.text;
+    const text=await AI.text(`아래 「${T.name}」 초안을 다음 지시대로 고쳐 쓰세요.
+지시: ${instr}
+
+- 지시가 바꾸라는 것 말고는 원래 제목 구조와 양식을 유지하세요.${L&&!L.slides?`\n- 분량 기준: ${L.c} (지시가 분량을 바꾸면 지시를 따르세요).`:""}
+- 확인할 수 없는 수치·인용문·문헌을 새로 지어내지 마세요. 참고자료는 아래 자료 목록에 있는 것만.
+- 설명 없이 고친 전체 본문만 출력하세요.
+
+<초안>
+${prev}
+</초안>${mats.length?`\n\n자료 목록:\n${mats.map((m,i)=>`${i+1}. ${m.title}${m.meta?` — ${m.meta}`:""}`).join("\n")}\n\n${ctx}`:""}`,
+      {cache:false,onText:t=>{S.stream[d.id]=t;const el=$("#docBody");if(el&&S.docId===d.id)el.innerHTML=md(t);paintCount(t,d);}});
+    pushVersion(d,prev);
+    d.text=text.trim();d.title=docTitle(d.text,d.title);d.updatedAt=Date.now();delete S.stream[d.id];
+    await Store.put("doc",d);toast("고쳐 썼어요 — 이전 버전은 '되돌리기'로 볼 수 있어요");
+  }catch(e){delete S.stream[d.id];toast("고쳐 쓰지 못했어요: "+aiErrText(e),4600);}
+  setJob(d.id,null);softRender();
+}
+function pushVersion(d,text){if(!text)return;d.versions=(d.versions||[]);d.versions.unshift({text,at:Date.now()});d.versions=d.versions.slice(0,6);}
+async function undoDoc(d){
+  const v=(d.versions||[]).shift();if(!v){toast("되돌릴 이전 버전이 없어요");return;}
+  d.text=v.text;d.title=docTitle(d.text,d.title);d.updatedAt=Date.now();await Store.put("doc",d).catch(()=>{});
+  toast("이전 버전으로 되돌렸어요");render();
+}
+async function deleteDoc(id){
+  const d=S.docs.find(x=>x.id===id);if(!d)return;
+  if(!await confirmBox(`「${d.title}」을(를) 삭제할까요?`,"삭제"))return;
+  S.docs=S.docs.filter(x=>x.id!==id);Store.del("doc",id).catch(()=>{});
+  if(S.docId===id)S.docId=null;render();
+}
+
+/* ---------- 내보내기: Word (.docx) ---------- */
+const xe=s=>String(s==null?"":s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])).replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g,"");
+function docxRuns(s,o={}){
+  s=String(s).replace(/`([^`]+)`/g,"$1").replace(/==([^=]+)==/g,"$1").replace(/\[([^\]]+)\]\((https?:[^)]+)\)/g,"$1");
+  const parts=[];const re=/\*\*([^*]+)\*\*/g;let i=0,m;
+  while((m=re.exec(s))){if(m.index>i)parts.push([s.slice(i,m.index),false]);parts.push([m[1],true]);i=re.lastIndex;}
+  if(i<s.length)parts.push([s.slice(i),false]);
+  return parts.map(([t,b])=>{
+    t=t.replace(/(^|[^*])\*([^*\s][^*]*)\*/g,"$1$2");
+    const rp=[(b||o.b)?"<w:b/><w:bCs/>":"",o.i?"<w:i/>":"",o.sz?`<w:sz w:val="${o.sz}"/><w:szCs w:val="${o.sz}"/>`:"",o.color?`<w:color w:val="${o.color}"/>`:""].join("");
+    return `<w:r>${rp?`<w:rPr>${rp}</w:rPr>`:""}<w:t xml:space="preserve">${xe(t)}</w:t></w:r>`;}).join("");
+}
+function mdToDocxBody(src){
+  const lines=String(src||"").replace(/\r/g,"").split("\n");let out="",i=0,m;
+  const P=(inner,pp="")=>`<w:p>${pp?`<w:pPr>${pp}</w:pPr>`:""}${inner}</w:p>`;
+  const isRow=s=>/^\s*\|.*\|\s*$/.test(s),cells=s=>s.trim().replace(/^\||\|$/g,"").split("|").map(c=>c.trim());
+  while(i<lines.length){const l=lines[i];
+    if(/^\s*```/.test(l)){i++;while(i<lines.length&&!/^\s*```/.test(lines[i])){out+=P(`<w:r><w:rPr><w:rFonts w:ascii="Consolas" w:hAnsi="Consolas"/><w:sz w:val="19"/></w:rPr><w:t xml:space="preserve">${xe(lines[i])}</w:t></w:r>`,'<w:spacing w:after="0"/>');i++;}i++;continue;}
+    if(/^\s*$/.test(l)){i++;continue;}
+    if((m=l.match(/^(#{1,4})\s+(.*)/))){const st=["Title","Heading1","Heading2","Heading3"][m[1].length-1];out+=P(docxRuns(m[2]),`<w:pStyle w:val="${st}"/>`);i++;continue;}
+    if(isRow(l)&&i+1<lines.length&&/^\s*\|[\s:|-]+\|\s*$/.test(lines[i+1])){
+      const head=cells(l);i+=2;const rows=[];while(i<lines.length&&isRow(lines[i])){rows.push(cells(lines[i]));i++;}
+      const n=Math.max(head.length,...rows.map(r=>r.length));
+      const cell=(t,hd)=>`<w:tc><w:tcPr><w:tcW w:w="${Math.floor(5000/n)}" w:type="pct"/>${hd?'<w:shd w:val="clear" w:color="auto" w:fill="E9EEF2"/>':""}</w:tcPr>${P(docxRuns(t||"",{b:hd,sz:20}),'<w:spacing w:before="40" w:after="40" w:line="264" w:lineRule="auto"/><w:jc w:val="left"/>')}</w:tc>`;
+      const row=(r,hd)=>`<w:tr>${hd?'<w:trPr><w:tblHeader/></w:trPr>':""}${Array.from({length:n},(_,k)=>cell(r[k],hd)).join("")}</w:tr>`;
+      out+=`<w:tbl><w:tblPr><w:tblStyle w:val="TableGrid"/><w:tblW w:w="5000" w:type="pct"/><w:tblLayout w:type="autofit"/></w:tblPr><w:tblGrid>${Array.from({length:n},()=>'<w:gridCol/>').join("")}</w:tblGrid>${row(head,true)}${rows.map(r=>row(r,false)).join("")}</w:tbl>`;
+      out+=P("",'<w:spacing w:after="60"/>');continue;}
+    if((m=l.match(/^(\s*)(?:([-*•])|(\d+)[.)])\s+(.*)/))){const lvl=Math.min(2,Math.floor(m[1].replace(/\t/g,"  ").length/2));
+      const mark=m[3]?m[3]+".":"•",left=360+lvl*360;
+      out+=P(`<w:r><w:t xml:space="preserve">${xe(mark)}\t</w:t></w:r>${docxRuns(m[4])}`,
+        `<w:tabs><w:tab w:val="left" w:pos="${left}"/></w:tabs><w:spacing w:after="60"/><w:ind w:left="${left}" w:hanging="${m[3]?320:240}"/><w:jc w:val="left"/>`);i++;continue;}
+    if((m=l.match(/^>\s?(.*)/))){out+=P(docxRuns(m[1],{color:"46535E"}),'<w:ind w:left="400"/><w:pBdr><w:left w:val="single" w:sz="12" w:space="8" w:color="D9B54A"/></w:pBdr>');i++;continue;}
+    if(/^---+\s*$/.test(l)){out+=P("",'<w:pBdr><w:bottom w:val="single" w:sz="6" w:space="1" w:color="D9E1E7"/></w:pBdr>');i++;continue;}
+    let para=l.trim();i++;
+    while(i<lines.length&&lines[i].trim()&&!/^(#{1,4}\s|\s*[-*•]\s|\s*\d+[.)]\s|>|\s*\||\s*```|---+\s*$)/.test(lines[i])){para+=" "+lines[i].trim();i++;}
+    out+=P(docxRuns(para));}
+  return out;
+}
+async function buildDocx(markdown,title){
+  if(!window.JSZip)throw{message:"Word 파일 도구를 불러오지 못했어요"};
+  const W='xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"';
+  const font='<w:rFonts w:ascii="Malgun Gothic" w:hAnsi="Malgun Gothic" w:eastAsia="맑은 고딕" w:cs="Malgun Gothic"/>';
+  const styles=`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:styles ${W}><w:docDefaults><w:rPrDefault><w:rPr>${font}<w:sz w:val="22"/><w:szCs w:val="22"/><w:lang w:val="ko-KR" w:eastAsia="ko-KR"/></w:rPr></w:rPrDefault>
+<w:pPrDefault><w:pPr><w:spacing w:after="120" w:line="312" w:lineRule="auto"/><w:jc w:val="both"/></w:pPr></w:pPrDefault></w:docDefaults>
+<w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:qFormat/></w:style>
+<w:style w:type="paragraph" w:styleId="Title"><w:name w:val="Title"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:spacing w:after="240"/><w:jc w:val="center"/></w:pPr><w:rPr><w:b/><w:bCs/><w:sz w:val="32"/><w:szCs w:val="32"/></w:rPr></w:style>
+<w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:spacing w:before="240" w:after="100"/><w:jc w:val="left"/><w:outlineLvl w:val="0"/></w:pPr><w:rPr><w:b/><w:bCs/><w:sz w:val="26"/><w:szCs w:val="26"/></w:rPr></w:style>
+<w:style w:type="paragraph" w:styleId="Heading2"><w:name w:val="heading 2"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:spacing w:before="180" w:after="80"/><w:jc w:val="left"/><w:outlineLvl w:val="1"/></w:pPr><w:rPr><w:b/><w:bCs/><w:sz w:val="23"/><w:szCs w:val="23"/></w:rPr></w:style>
+<w:style w:type="paragraph" w:styleId="Heading3"><w:name w:val="heading 3"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:spacing w:before="120" w:after="60"/><w:jc w:val="left"/><w:outlineLvl w:val="2"/></w:pPr><w:rPr><w:b/><w:bCs/></w:rPr></w:style>
+<w:style w:type="table" w:styleId="TableGrid"><w:name w:val="Table Grid"/><w:tblPr><w:tblBorders><w:top w:val="single" w:sz="4" w:space="0" w:color="8794A0"/><w:left w:val="single" w:sz="4" w:space="0" w:color="8794A0"/><w:bottom w:val="single" w:sz="4" w:space="0" w:color="8794A0"/><w:right w:val="single" w:sz="4" w:space="0" w:color="8794A0"/><w:insideH w:val="single" w:sz="4" w:space="0" w:color="8794A0"/><w:insideV w:val="single" w:sz="4" w:space="0" w:color="8794A0"/></w:tblBorders><w:tblCellMar><w:left w:w="100" w:type="dxa"/><w:right w:w="100" w:type="dxa"/></w:tblCellMar></w:tblPr></w:style>
+</w:styles>`;
+  const doc=`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document ${W}><w:body>${mdToDocxBody(markdown)}<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1417" w:right="1417" w:bottom="1417" w:left="1417" w:header="708" w:footer="708" w:gutter="0"/></w:sectPr></w:body></w:document>`;
+  const z=new JSZip();
+  z.file("[Content_Types].xml",`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/><Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/></Types>`);
+  z.file("_rels/.rels",`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/></Relationships>`);
+  z.file("word/_rels/document.xml.rels",`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>`);
+  z.file("word/document.xml",doc);
+  z.file("word/styles.xml",styles);
+  const now=new Date().toISOString().replace(/\.\d+Z$/,"Z");
+  z.file("docProps/core.xml",`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><dc:title>${xe(title||"")}</dc:title><dcterms:created xsi:type="dcterms:W3CDTF">${now}</dcterms:created><dcterms:modified xsi:type="dcterms:W3CDTF">${now}</dcterms:modified></cp:coreProperties>`);
+  return await z.generateAsync({type:"blob",mimeType:"application/vnd.openxmlformats-officedocument.wordprocessingml.document"});
+}
+
+/* ---------- 내보내기: PowerPoint (.pptx) ---------- */
+function parseSlides(src){
+  const text=String(src||"").replace(/\r/g,"");
+  const deck=(text.match(/^#\s+(.+)$/m)||[])[1]||"";
+  const chunks=text.split(/^##\s+/m).slice(1);
+  const slides=chunks.map(ch=>{
+    const ls=ch.split("\n");const title=ls[0].replace(/^슬라이드\s*\d+\s*[.:)\-–]\s*/,"").replace(/^Slide\s*\d+\s*[.:)\-–]\s*/i,"").replace(/\*\*/g,"").trim();
+    const bullets=[],notes=[],figs=[];
+    for(const raw of ls.slice(1)){const l=raw.trimEnd();
+      let m;
+      if((m=l.match(/^\s*>\s*(?:발표자\s*노트\s*[:：]\s*)?(.*)/))){if(m[1].trim())notes.push(m[1].trim());continue;}
+      if((m=l.match(/^(\s*)(?:[-*•]|\d+[.)])\s+(.*)/))){const t=m[2].replace(/\*\*([^*]+)\*\*/g,"$1").trim();
+        const fg=t.match(/^\[(?:그림|도식|그래프|Figure|Fig\.?)\s*[:：]\s*([^\]]+)\]$/i);
+        if(fg)figs.push(fg[1].trim());else bullets.push({t,lvl:m[1].length>=2?1:0});continue;}
+      if(l.trim()&&!/^#/.test(l))bullets.push({t:l.trim().replace(/\*\*([^*]+)\*\*/g,"$1"),lvl:0});}
+    return {title,bullets,notes:notes.join(" "),figs};
+  }).filter(s=>s.title||s.bullets.length);
+  return {deck,slides};
+}
+const PPT_SRC=["https://cdn.jsdelivr.net/npm/pptxgenjs@4.0.1/dist/pptxgen.bundle.js","https://cdn.jsdelivr.net/npm/pptxgenjs@3.12.0/dist/pptxgen.bundle.js"];
+function loadScript(src){return new Promise((res,rej)=>{const s=document.createElement("script");s.src=src;s.onload=()=>res();s.onerror=()=>{s.remove();rej();};document.head.appendChild(s);});}
+async function needPptx(){
+  if(window.PptxGenJS)return window.PptxGenJS;
+  for(const u of PPT_SRC){try{await loadScript(u);if(window.PptxGenJS)return window.PptxGenJS;}catch(e){}}
+  throw{message:"PPT 도구를 불러오지 못했어요 (인터넷 연결을 확인해 주세요)"};
+}
+function buildPptxDeck(Pptx,markdown){
+  const {deck,slides}=parseSlides(markdown);
+  if(!slides.length)throw{message:"슬라이드를 찾지 못했어요. '## 슬라이드 1. 제목' 형식인지 확인해 주세요."};
+  const C={ink:"16212B",muted:"46535E",accent:"1C5A8A",soft:"E1EDF6",paper:"F3F6F8",line:"D9E1E7",mark:"F2D36B"};
+  const F="맑은 고딕";
+  const p=new Pptx();p.layout="LAYOUT_WIDE";p.title=deck||slides[0].title;
+  slides.forEach((s,idx)=>{
+    const sl=p.addSlide();
+    const isCover=idx===0;
+    if(isCover){
+      sl.background={color:C.paper};
+      sl.addShape(p.ShapeType.rect,{x:0,y:0,w:0.22,h:7.5,fill:{color:C.accent},line:{color:C.accent}});
+      sl.addText(s.title||deck,{x:0.9,y:2.3,w:11.4,h:1.5,fontFace:F,fontSize:38,bold:true,color:C.ink,valign:"bottom",fit:"shrink"});
+      const sub=s.bullets.map(b=>b.t).join("\n");
+      if(sub)sl.addText(sub,{x:0.9,y:3.95,w:11.4,h:1.6,fontFace:F,fontSize:18,color:C.muted,valign:"top",paraSpaceAfter:4});
+      sl.addShape(p.ShapeType.rect,{x:0.9,y:3.8,w:1.2,h:0.06,fill:{color:C.mark},line:{color:C.mark}});
+    }else{
+      sl.background={color:"FFFFFF"};
+      sl.addText(s.title,{x:0.6,y:0.35,w:12.1,h:0.85,fontFace:F,fontSize:26,bold:true,color:C.ink,valign:"middle",fit:"shrink"});
+      sl.addShape(p.ShapeType.rect,{x:0.6,y:1.22,w:12.1,h:0.03,fill:{color:C.line},line:{color:C.line}});
+      sl.addShape(p.ShapeType.rect,{x:0.6,y:1.2,w:0.9,h:0.07,fill:{color:C.accent},line:{color:C.accent}});
+      const hasFig=s.figs.length>0,bw=hasFig?7.0:12.1;
+      if(s.bullets.length)sl.addText(s.bullets.map(b=>({text:b.t,options:{bullet:b.lvl?{indent:18}:true,indentLevel:b.lvl,fontSize:b.lvl?16:20,color:b.lvl?C.muted:C.ink,breakLine:true,paraSpaceAfter:10}})),
+        {x:0.6,y:1.55,w:bw,h:5.3,fontFace:F,valign:"top",fit:"shrink"});
+      if(hasFig){
+        sl.addShape(p.ShapeType.rect,{x:7.95,y:1.6,w:4.75,h:5.1,fill:{color:C.paper},line:{color:C.line,width:1.25,dashType:"dash"}});
+        sl.addText([{text:"그림 자리",options:{bold:true,color:C.accent,fontSize:13,breakLine:true}},
+          ...s.figs.map(t=>({text:t,options:{color:C.muted,fontSize:14,breakLine:true}}))],
+          {x:8.15,y:1.8,w:4.35,h:4.7,fontFace:F,valign:"middle",align:"center",fit:"shrink"});}
+      sl.addText(String(idx+1),{x:12.2,y:6.95,w:0.6,h:0.35,fontFace:F,fontSize:10,color:"8794A0",align:"right"});
+    }
+    if(s.notes)sl.addNotes(s.notes);
+  });
+  return {p,count:slides.length};
+}
+async function buildPptx(markdown){const Pptx=await needPptx();const {p,count}=buildPptxDeck(Pptx,markdown);return {blob:await p.write({outputType:"blob"}),count};}
+
+/* 파일(블롭) 저장: claude.ai에서는 저장 권한으로, 밖에서는 바로 내려받기 */
+async function saveBlob(name,blob){
+  if(ENV.embedded){
+    if(!ENV.dl){toast("이 화면에서는 파일 저장을 쓸 수 없어요. GitHub에 올린 사이트에서 내려받으세요.",5200);return;}
+    try{await ENV.dl.save({filename:name,data:blob});toast("저장했어요");}
+    catch(e){const c=e&&e.code;if(c==="declined")return;
+      toast(c==="rate_limited"?"저장 창이 이미 열려 있어요. 잠시 뒤 다시 눌러 주세요.":"저장하지 못했어요: "+errMsg(e),4600);}
+    return;}
+  const u=URL.createObjectURL(blob);const a=document.createElement("a");a.href=u;a.download=name;
+  document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(u),4000);
+}
+const safeName=s=>String(s||"자료").replace(/[\\/:*?"<>|]/g,"_").replace(/\s+/g," ").trim().slice(0,80)||"자료";
+async function exportDoc(d,kind){
+  const base=safeName(d.title);
+  try{
+    if(kind==="md")return download(base+".md",d.text,"text/markdown;charset=utf-8");
+    if(kind==="txt")return download(base+".txt",plainText(d.text));
+    if(kind==="copy")return copyText(d.text);
+    if(kind==="copyPlain")return copyText(plainText(d.text));
+    if(kind==="docx"){const bx=busyBox("Word 파일 만드는 중…");try{const b=await buildDocx(d.text,d.title);bx.close();await saveBlob(base+".docx",b);}finally{bx.close();}return;}
+    if(kind==="pptx"){const bx=busyBox("PowerPoint 파일 만드는 중…");try{const r=await buildPptx(d.text);bx.close();await saveBlob(base+".pptx",r.blob);}finally{bx.close();}return;}
+  }catch(e){toast("내보내지 못했어요: "+errMsg(e),4600);}
+}
+
+/* ---------- 화면 ---------- */
+function paintCount(text,d){
+  const el=$("#docCount");if(!el)return;
+  const c=countChars(text),L=LEN[(d.opts||{}).len];
+  let s=`공백 포함 <b class="mono">${c.all.toLocaleString()}</b>자 · 제외 <b class="mono">${c.noSpace.toLocaleString()}</b>자`;
+  if(L&&L.slides){const n=parseSlides(text).slides.length;s=`슬라이드 <b class="mono">${n}</b>장 / 목표 ${L.slides}장 · `+s;}
+  else if(L&&L.n){const r=c.all/L.n;s+=` · 목표 ${L.l} (${L.c.replace("공백 포함 ","")})`;
+    if(r>1.12)s+=` <span class="tag err">분량 초과</span>`;else if(r<0.6)s+=` <span class="tag">분량 부족</span>`;else s+=` <span class="tag ok">분량 맞음</span>`;}
+  el.innerHTML=s;
+}
+function renderMake(){
+  const host=$("#makePage");
+  if(S.docId){const d=S.docs.find(x=>x.id===S.docId);if(d)return renderDoc(host,d);S.docId=null;}
+  const f=mkState(),T=TPL[f.tpl];
+  const isSlides=f.tpl==="slides";
+  const lenKeys=isSlides?["s8","s12","s16","s20"]:["half","one","two","three","five"];
+  if(!lenKeys.includes(f.len))f.len=T.len;
+  const segs=(k,keys,map)=>`<div class="seg" data-mk="${k}">${keys.map(v=>`<button type="button" data-v="${v}" aria-pressed="${f[k]===v}">${esc(map[v].l)}</button>`).join("")}</div>`;
+  const courseOf=m=>m.course||"과목 없음";
+  const groups={};S.mats.forEach(m=>(groups[courseOf(m)]||(groups[courseOf(m)]=[])).push(m));
+  host.innerHTML=`
+    <section class="card"><div class="pad">
+      <span class="cap">자료 만들기</span>
+      <h2 class="ptitle">수업·과제 자료 초안 만들기</h2>
+      <p class="muted" style="margin:0">자료함의 강의자료·논문과 내 메모로 보고서, 리포트, 발표 자료, 요약본을 만들어요. 만든 초안은 고쳐 쓰고, Word·PowerPoint로 내보낼 수 있어요.</p>
+      <div class="tplgrid">${Object.entries(TPL).map(([k,t])=>`<button class="step" type="button" data-tpl="${k}" aria-pressed="${f.tpl===k}"><b>${esc(t.name)}</b><span>${esc(t.desc)}</span></button>`).join("")}</div>
+    </div></section>
+
+    <section class="card"><div class="pad">
+      <span class="cap">${esc(T.name)}</span>
+      <label class="field"><span class="lab">${f.tpl==="free"?"요청 — 무엇을 어떤 양식으로 만들지":"주제·과제 내용"}</span>
+        ${f.tpl==="free"?`<textarea id="mkTopic" placeholder="${esc(T.topicPh)}">${esc(f.topic)}</textarea>`:`<input id="mkTopic" value="${esc(f.topic)}" placeholder="${esc(T.topicPh)}">`}</label>
+      <label class="field"><span class="lab">${esc(T.memoLabel)}</span>
+        <textarea id="mkMemo" style="min-height:${T.needMemo?160:100}px" placeholder="${f.tpl==="lecture"?"예: 신장은 나노입자 크기 의존적으로 걸러짐 — 6nm 이하는 사구체 통과 / 연사가 강조: 전임상→임상 간극 / 내 연구(ertiprotafib)에 적용? 등 생각나는 대로":f.tpl==="lab"?"예: 시료 A 흡광도 0.512, 0.498, 0.505 / BSA 표준곡선 R²=0.997 / 37°C 30분 반응":""}">${esc(f.memo)}</textarea></label>
+      <div class="field"><span class="lab">근거 자료 (선택) — ${f.ids.size?`<b>${f.ids.size}개</b> 골랐어요`:"고르지 않으면 메모와 일반 지식으로만 써요"}</span>
+        ${S.mats.length?Object.entries(groups).map(([c,arr])=>`<div style="display:flex;flex-direction:column;gap:6px;margin-top:4px">
+          <span class="tiny muted">${esc(c)}</span>
+          <div class="chips">${arr.map(m=>`<button class="chip" type="button" data-pick="${m.id}" aria-pressed="${f.ids.has(m.id)}">${esc(m.title.slice(0,40))}${m.notes?'<span class="n">노트</span>':""}</button>`).join("")}</div></div>`).join("")
+        :`<p class="note-bar" style="margin:0">자료함이 비어 있어요. <button class="linkbtn" type="button" data-golib>자료 올리기</button> 또는 메모만으로도 만들 수 있어요.</p>`}
+        ${f.ids.size?`<div><button class="linkbtn" type="button" data-clearpick>선택 해제</button></div>`:""}
+      </div>
+      <div class="field"><span class="lab">분량</span>${segs("len",lenKeys,LEN)}</div>
+      <div class="field"><span class="lab">문체</span>${segs("tone",["report","bullet","polite"],TONE)}</div>
+      <div class="field"><span class="lab">언어</span>${segs("lang",["ko","en","both"],LANG)}</div>
+      <label class="field"><span class="lab">추가 요구사항 (선택 — 교수님 지시, 꼭 넣을 키워드, 피할 것)</span>
+        <input id="mkExtra" value="${esc(f.extra)}" placeholder="예: 최근 5년 연구 위주로, 그림 2개 넣을 자리, 참고문헌 APA"></label>
+      <div class="row between">
+        <span class="small muted">${AI.auto?"":"자동 AI 연결이 없어 복사·붙여넣기로 진행돼요."}</span>
+        <button class="btn primary big" type="button" data-gen>초안 만들기</button>
+      </div>
+      <p class="tiny muted" style="margin:0">만든 글은 초안이에요. 사실 관계와 출처를 확인하고, 내 생각과 말로 다듬어 제출하세요.</p>
+    </div></section>
+
+    ${S.docs.length?`<section class="card"><div class="pad">
+      <span class="cap">만든 자료 · ${S.docs.length}</span>
+      <div class="rlist">${S.docs.map(d=>{const c=countChars(d.text);const T2=TPL[d.tpl]||TPL.free;
+        return `<article class="rc plain"><div>
+          <h3><button type="button" data-opendoc="${d.id}">${esc(d.title)}</button></h3>
+          <div class="rmeta"><span class="pill">${esc(T2.name)}</span>
+            ${d.tpl==="slides"?`<span class="mono">${parseSlides(d.text).slides.length}장</span>`:`<span class="mono">${c.all.toLocaleString()}자</span>`}
+            ${(d.matIds||[]).length?`<span>자료 ${d.matIds.length}개</span>`:""}
+            <span>${fmtDate(d.updatedAt||d.createdAt)}</span></div>
+          ${jobTag(d.id)}
+          <div class="ops"><button class="btn sm primary" type="button" data-opendoc="${d.id}">열기</button>
+            <button class="btn sm" type="button" data-again="${d.id}">같은 설정으로 다시</button>
+            <button class="btn sm danger" type="button" data-deldoc="${d.id}">삭제</button></div>
+        </div></article>`;}).join("")}</div>
+    </div></section>`:""}`;
+
+  const sync=()=>{f.topic=($("#mkTopic",host)||{}).value||"";f.memo=($("#mkMemo",host)||{}).value||"";f.extra=($("#mkExtra",host)||{}).value||"";};
+  $$("[data-tpl]",host).forEach(b=>b.onclick=()=>{sync();const k=b.dataset.tpl;Object.assign(f,mkDefaults(k));renderMake();});
+  $$("[data-mk]",host).forEach(g=>$$("button",g).forEach(b=>b.onclick=()=>{sync();f[g.dataset.mk]=b.dataset.v;renderMake();}));
+  $$("[data-pick]",host).forEach(b=>b.onclick=()=>{sync();const id=b.dataset.pick;f.ids.has(id)?f.ids.delete(id):f.ids.add(id);renderMake();});
+  const cp=$("[data-clearpick]",host);if(cp)cp.onclick=()=>{sync();f.ids.clear();renderMake();};
+  const gl=$("[data-golib]",host);if(gl)gl.onclick=()=>go("lib");
+  ["#mkTopic","#mkMemo","#mkExtra"].forEach(s=>{const el=$(s,host);if(el)el.oninput=sync;});
+  $("[data-gen]",host).onclick=()=>{sync();generateDoc();};
+  $$("[data-opendoc]",host).forEach(b=>b.onclick=()=>{S.docId=b.dataset.opendoc;S.docEdit=false;renderMake();window.scrollTo(0,0);});
+  $$("[data-deldoc]",host).forEach(b=>b.onclick=()=>deleteDoc(b.dataset.deldoc));
+  $$("[data-again]",host).forEach(b=>b.onclick=()=>{const d=S.docs.find(x=>x.id===b.dataset.again);if(!d)return;
+    S.mk=Object.assign({ids:new Set((d.matIds||[]).filter(getMat)),topic:d.topic||"",memo:d.memo||"",extra:d.extra||"",tpl:d.tpl},d.opts||mkDefaults(d.tpl));
+    renderMake();window.scrollTo(0,0);toast("설정을 불러왔어요. 고친 뒤 '초안 만들기'를 누르세요.");});
+}
+function renderDoc(host,d){
+  const T=TPL[d.tpl]||TPL.free,text=S.stream[d.id]||d.text,busy=!!S.jobs[d.id];
+  const quick={lecture:["A4 1장 분량에 맞게","고찰을 더 깊게","더 자연스럽게, 직접 쓴 글처럼","배운 점을 더 구체적으로"],
+    report:["분량에 맞게 다듬기","논증을 더 탄탄하게","반론과 한계 보강","더 자연스럽게"],
+    slides:["슬라이드 글자 줄이기","발표자 노트 더 자세히","슬라이드 4장 줄이기","결론 슬라이드 강화"],
+    summary:["더 압축해서","비교표 하나 더","외울 것 위주로"],
+    journal:["비판적 검토 강화","토론 질문 더 날카롭게","결과를 Figure별로 더 자세히"],
+    review:["주제별 종합 강화","연구 공백 구체적으로","분량에 맞게 다듬기"],
+    lab:["고찰 더 깊게","오차 원인 분석 보강","방법을 더 재현 가능하게"],
+    free:["더 짧게","더 자세히","더 자연스럽게"]}[d.tpl]||[];
+  const mats=(d.matIds||[]).map(getMat).filter(Boolean);
+  host.innerHTML=`
+    <div class="row"><button class="btn ghost" type="button" data-back>← 자료 만들기</button></div>
+    <section class="card">
+      <div class="head">
+        <div class="eyebrow"><span class="folder">${esc(T.name)}</span>
+          <span>${esc((LEN[(d.opts||{}).len]||{}).l||"")}</span><span>${esc((TONE[(d.opts||{}).tone]||{}).l||"")}</span>
+          <span>${fmtDate(d.updatedAt||d.createdAt)}</span>
+          ${(d.versions||[]).length?`<span>이전 버전 ${d.versions.length}개</span>`:""}</div>
+        <h2 class="ptitle">${esc(d.title)}</h2>
+        ${mats.length?`<div class="chips">${mats.map(m=>`<span class="chip">${esc(m.title.slice(0,36))}</span>`).join("")}</div>`:""}
+        <p class="small muted" style="margin:0" id="docCount"></p>
+        ${jobTag(d.id)}
+        <div class="actions">
+          ${S.docEdit?`<button class="btn primary" type="button" data-save>저장</button><button class="btn" type="button" data-cancel>취소</button>`
+          :`<button class="btn" type="button" data-edit${busy?" disabled":""}>직접 고치기</button>
+            ${d.tpl==="slides"?`<button class="btn primary" type="button" data-x="pptx"${busy?" disabled":""}>PowerPoint (.pptx)</button>`:`<button class="btn primary" type="button" data-x="docx"${busy?" disabled":""}>Word (.docx)</button>`}
+            <button class="btn" type="button" data-x="copyPlain">글만 복사</button>
+            <button class="btn" type="button" data-x="copy">마크다운 복사</button>
+            <button class="btn" type="button" data-x="md">.md</button>
+            ${d.tpl==="slides"?`<button class="btn" type="button" data-x="docx">개요 Word</button>`:""}
+            ${(d.versions||[]).length?`<button class="btn" type="button" data-undo>되돌리기</button>`:""}
+            <button class="btn danger" type="button" data-del>삭제</button>`}
+        </div>
+      </div>
+      <div class="pane">
+        ${S.docEdit?`<textarea class="ansfield" id="docEditor" style="min-height:60vh;font-family:var(--f-mono);font-size:14px;line-height:1.7">${esc(d.text)}</textarea>
+          <p class="tiny muted" style="margin:0"># 제목, ## 소제목, - 글머리표, **굵게**, | 표 | 형식을 그대로 쓸 수 있어요.${d.tpl==="slides"?" 슬라이드는 '## 슬라이드 N. 제목' 아래 글머리표와 '> 발표자 노트:'로 써 주세요.":""}</p>`
+        :text?`<div class="md" id="docBody">${md(text)}</div>`:`<div class="placeholder"><span class="spin"></span> 쓰는 중…</div>`}
+      </div>
+    </section>
+    ${S.docEdit||!d.text?"":`<section class="card noprint"><div class="pad">
+      <span class="cap">고쳐 쓰기</span>
+      <div class="chips">${quick.map(q=>`<button class="chip" type="button" data-q="${esc(q)}"${busy?" disabled":""}>${esc(q)}</button>`).join("")}</div>
+      <div class="row"><input class="search" id="revIn" style="flex:1;min-width:200px" placeholder="예: 두 번째 문단을 내 연구(신장 표적 나노입자)와 더 연결해 줘">
+        <button class="btn primary" type="button" data-rev${busy?" disabled":""}>고쳐 쓰기</button></div>
+    </div></section>`}`;
+  paintCount(text,d);
+  $("[data-back]",host).onclick=()=>{S.docId=null;S.docEdit=false;renderMake();window.scrollTo(0,0);};
+  const ed=$("[data-edit]",host);if(ed)ed.onclick=()=>{S.docEdit=true;renderMake();};
+  const cc=$("[data-cancel]",host);if(cc)cc.onclick=()=>{S.docEdit=false;renderMake();};
+  const sv=$("[data-save]",host);if(sv)sv.onclick=async()=>{const v=$("#docEditor",host).value;
+    if(v!==d.text){pushVersion(d,d.text);d.text=v;d.title=docTitle(v,d.title);d.updatedAt=Date.now();await Store.put("doc",d).catch(e=>toast(errMsg(e)));toast("저장했어요");}
+    S.docEdit=false;renderMake();};
+  const de=$("#docEditor",host);if(de)de.oninput=()=>paintCount(de.value,d);
+  $$("[data-x]",host).forEach(b=>b.onclick=()=>exportDoc(d,b.dataset.x));
+  const un=$("[data-undo]",host);if(un)un.onclick=()=>undoDoc(d);
+  const dl=$("[data-del]",host);if(dl)dl.onclick=()=>deleteDoc(d.id);
+  $$("[data-q]",host).forEach(b=>b.onclick=()=>reviseDoc(d,b.dataset.q));
+  const ri=$("#revIn",host),rb=$("[data-rev]",host);
+  if(rb)rb.onclick=()=>{const v=ri.value.trim();if(!v){toast("어떻게 고칠지 적어 주세요");return;}ri.value="";reviseDoc(d,v);};
+  if(ri)ri.onkeydown=e=>{if(e.key==="Enter"&&rb)rb.click();};
+}
+/* 자료함·자료 상세에서 바로 넘어오기 */
+function startMakeFrom(ids,tpl){
+  const f=mkState();if(tpl)Object.assign(f,mkDefaults(tpl));
+  f.ids=new Set(ids.filter(getMat));S.docId=null;S.docEdit=false;go("make");
+  toast(`자료 ${f.ids.size}개를 골라 두었어요. 양식을 고르고 '초안 만들기'를 누르세요.`);
+}
+
+/* ===================== 원본 파일 보관 ===================== */
+/* 올린 PDF·PPTX·DOCX·이미지의 원본을 이 브라우저(IndexedDB)에 그대로 보관합니다.
+   글자·노트·퀴즈는 저장 방식(클라우드/브라우저)을 따르지만, 원본은 크기가 커서 언제나 이 브라우저에 둡니다.
+   다른 기기로 옮길 때는 백업 .zip에 원본이 함께 들어갑니다. */
+const FILE_MAX=150*1024*1024;
+const FileStore={
+  _p:null,
+  open(){return this._p||(this._p=new Promise((res,rej)=>{
+    let r;try{r=indexedDB.open("study-room-files",1);}catch(e){return rej(e);}
+    r.onupgradeneeded=()=>{if(!r.result.objectStoreNames.contains("files"))r.result.createObjectStore("files",{keyPath:"id"});};
+    r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error);}));},
+  async _t(mode,fn){const d=await this.open();return new Promise((res,rej)=>{
+    const t=d.transaction("files",mode);const rq=fn(t.objectStore("files"));
+    t.oncomplete=()=>res(rq&&rq.result);t.onerror=()=>rej(t.error);t.onabort=()=>rej(t.error);});},
+  async put(id,file,name,type){
+    const rec={id,name:name||file.name||"원본",type:type||file.type||"",size:file.size||0,at:Date.now()};
+    try{await this._t("readwrite",s=>s.put(Object.assign({blob:file},rec)));}
+    catch(e){ /* 일부 브라우저는 Blob을 그대로 못 넣어요 — 바이트로 넣습니다 */
+      const buf=await file.arrayBuffer();await this._t("readwrite",s=>s.put(Object.assign({buf},rec)));}
+    return rec;},
+  async get(id){const r=await this._t("readonly",s=>s.get(id));if(!r)return null;
+    if(!r.blob&&r.buf)r.blob=new Blob([r.buf],{type:r.type||"application/octet-stream"});return r;},
+  del(id){return this._t("readwrite",s=>s.delete(id));},
+  async all(){const l=(await this._t("readonly",s=>s.getAll()))||[];
+    return l.map(r=>{if(!r.blob&&r.buf)r.blob=new Blob([r.buf],{type:r.type||"application/octet-stream"});return r;});},
+  async meta(){const l=(await this._t("readonly",s=>s.getAllKeys()))||[];return l;},
+  async clear(){return this._t("readwrite",s=>s.clear());}
+};
+let persistAsked=false;
+async function askPersist(){
+  if(persistAsked)return;persistAsked=true;
+  try{if(navigator.storage&&navigator.storage.persist&&!(await navigator.storage.persisted()))await navigator.storage.persist();}catch(e){}
+}
+const fmtBytes=n=>n>=1048576?(n/1048576).toFixed(n>=104857600?0:1)+"MB":n>=1024?Math.round(n/1024)+"KB":(n||0)+"B";
+async function archiveOriginal(m,file){
+  if(!file||!file.size)return;
+  if(file.size>FILE_MAX){m.fileErr=`원본이 ${fmtBytes(file.size)}라 보관하지 않았어요 (최대 ${fmtBytes(FILE_MAX)})`;return;}
+  try{const r=await FileStore.put(m.id,file,file.name,file.type);m.file={name:r.name,type:r.type,size:r.size};delete m.fileErr;askPersist();}
+  catch(e){m.fileErr="브라우저 저장공간이 부족해 원본을 보관하지 못했어요";}
+}
+async function attachOriginal(m,file){
+  await archiveOriginal(m,file);
+  await Store.put("mat",m).catch(()=>{});
+  toast(m.file?`원본 「${m.file.name}」을 보관했어요`:(m.fileErr||"원본을 보관하지 못했어요"),4200);
+  S.fileHave=null;render();
+}
+async function openOriginal(m,mode){
+  let r=null;try{r=await FileStore.get(m.id);}catch(e){}
+  if(!r||!r.blob){toast("이 브라우저에는 원본이 없어요. 원본을 올린 기기에서 백업(.zip)을 받아 가져오거나, 원본을 다시 붙여 주세요.",6000);return;}
+  if(mode==="open"&&!ENV.embedded){const u=URL.createObjectURL(r.blob);const a=document.createElement("a");a.href=u;a.target="_blank";a.rel="noopener";
+    document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(u),60000);return;}
+  await saveBlob(r.name||safeName(m.title),r.blob);
+}
+/* 보관 현황: 자료마다 이 브라우저에 원본이 있는지 */
+async function refreshFileHave(){
+  try{S.fileHave=new Set(await FileStore.meta());}catch(e){S.fileHave=new Set();}
+  return S.fileHave;
+}
+async function storageInfo(){
+  let used=null,quota=null,persisted=false;
+  try{if(navigator.storage&&navigator.storage.estimate){const e=await navigator.storage.estimate();used=e.usage;quota=e.quota;}}catch(e){}
+  try{if(navigator.storage&&navigator.storage.persisted)persisted=await navigator.storage.persisted();}catch(e){}
+  let n=0,bytes=0;try{const l=await FileStore.all();n=l.length;bytes=l.reduce((a,r)=>a+(r.size||0),0);}catch(e){}
+  return {used,quota,persisted,n,bytes};
+}
+
+/* ---------- 백업: .zip(원본 포함) / .json(가벼운 백업) ---------- */
+async function collectBackup(){
+  const txts=[];
+  for(const m of S.mats)for(let i=0;i<(m.chunks||0);i++){const d=await Store.get("txt",m.id+"__"+i);if(d)txts.push(d);}
+  return {app:"study-room",v:2,at:Date.now(),mats:S.mats,txts,quizzes:S.quizzes,atts:S.atts,wrong:S.wrong,docs:S.docs};
+}
+async function exportBackupZip(){
+  if(!window.JSZip){toast("압축 도구를 불러오지 못했어요. 가벼운 백업(.json)을 쓰세요.");return;}
+  const bx=busyBox("백업 파일 만드는 중… (원본이 많으면 조금 걸려요)");
+  try{
+    const data=await collectBackup(),z=new JSZip();
+    let files=[];try{files=await FileStore.all();}catch(e){}
+    const keep=new Set(S.mats.map(m=>m.id));
+    const index=[];
+    for(const r of files){if(!keep.has(r.id)||!r.blob)continue;
+      const path=`files/${r.id}__${safeName(r.name)}`;z.file(path,r.blob);index.push({id:r.id,path,name:r.name,type:r.type,size:r.size});}
+    data.files=index;
+    z.file("backup.json",JSON.stringify(data,null,1));
+    z.file("README.txt",`전공 학습실 백업 (${fmtDate(Date.now())})\n\n전공 학습실 → 설정 → 백업 가져오기에서 이 .zip 파일을 고르면 자료·노트·퀴즈·오답노트·만든 자료와 원본 파일 ${index.length}개가 돌아옵니다.\n압축을 풀 필요는 없어요. files/ 폴더에 원본이 그대로 들어 있습니다.\n`);
+    const blob=await z.generateAsync({type:"blob",compression:"DEFLATE",compressionOptions:{level:6}});
+    bx.close();
+    await saveBlob(`전공학습실-백업-${fmtDate(Date.now()).replace(/\./g,"")}.zip`,blob);
+  }catch(e){bx.close();toast("백업하지 못했어요: "+errMsg(e),4600);}
+}
+async function restoreBackupData(o,fileMap){
+  let n=0,nf=0;
+  for(const m of (o.mats||[])){if(!m||!m.id)continue;S.mats=S.mats.filter(x=>x.id!==m.id);S.mats.unshift(m);await Store.put("mat",m);n++;}
+  for(const t of (o.txts||[])){if(t&&t.id)await Store.put("txt",t);}
+  for(const q of (o.quizzes||[])){if(q&&q.id){S.quizzes=S.quizzes.filter(x=>x.id!==q.id);S.quizzes.unshift(q);await Store.put("quiz",q);}}
+  for(const w of (o.wrong||[])){if(w&&w.id){S.wrong=S.wrong.filter(x=>x.id!==w.id);S.wrong.unshift(w);await Store.put("wrong",w);}}
+  for(const a of (o.atts||[])){if(a&&a.id){S.atts=S.atts.filter(x=>x.id!==a.id);S.atts.unshift(a);await Store.put("att",a);}}
+  for(const d of (o.docs||[])){if(d&&d.id){S.docs=S.docs.filter(x=>x.id!==d.id);S.docs.unshift(d);await Store.put("doc",d);}}
+  if(fileMap)for(const [id,f] of fileMap){try{await FileStore.put(id,f.blob,f.name,f.type);nf++;}catch(e){}}
+  S.mats.sort((x,y)=>(y.createdAt||0)-(x.createdAt||0));S.docs.sort((x,y)=>(y.updatedAt||y.createdAt||0)-(x.updatedAt||x.createdAt||0));
+  S.texts={};S.fileHave=null;
+  return {n,nf};
+}
+async function importBackupZip(file){
+  if(!window.JSZip)throw{message:"압축 도구를 불러오지 못했어요"};
+  const z=await JSZip.loadAsync(await file.arrayBuffer());
+  const bj=z.file("backup.json");if(!bj)throw{message:"전공 학습실 백업 .zip이 아니에요 (backup.json이 없어요)"};
+  const o=JSON.parse(await bj.async("string"));
+  const map=new Map();
+  for(const f of (o.files||[])){const e=z.file(f.path);if(!e)continue;
+    const blob=await e.async("blob");map.set(f.id,{blob:f.type?new Blob([blob],{type:f.type}):blob,name:f.name,type:f.type});}
+  const r=await restoreBackupData(o,map);
+  toast(`백업에서 자료 ${r.n}건${r.nf?`과 원본 ${r.nf}개`:""}를 가져왔어요`,5000);render();
+}
+
 /* ===================== 그리기 ===================== */
-const VIEWS=["home","lib","mat","quiz","play","result","wrong","cards","hub"];
+const VIEWS=["home","lib","mat","make","quiz","play","result","wrong","cards","hub"];
 function go(v,noRender){
   if(!VIEWS.includes(v))v="home";
   if(S.view==="play"&&v!=="play"&&S.play){ /* 풀던 퀴즈는 유지하되 화면만 이동 */ }
@@ -1415,6 +2046,7 @@ function render(){
   $("#navQuiz").textContent=S.quizzes.length||"";
   $("#navWrong").textContent=S.wrong.length||"";
   const due=dueCards().length;$("#navCards").textContent=due||"";
+  $("#navMake").textContent=S.docs.length||"";
   $("#quick").textContent=[AI.auto?"AI "+({claude:"Claude",key:"API 키",gemini:"Google AI"}[AI.kind]):"AI 수동",
     ENV.storage==="cloud"?"클라우드 저장":ENV.storage==="browser"?"이 브라우저에 저장":"임시 저장"].join(" · ");
   $("#brandSub").textContent=S.loaded?"":"불러오는 중…";
@@ -1427,6 +2059,7 @@ function render(){
   else if(S.view==="wrong")renderWrong();
   else if(S.view==="cards")renderCards();
   else if(S.view==="hub")renderHub();
+  else if(S.view==="make")renderMake();
 }
 
 /* ---------- 홈 ---------- */
@@ -1444,7 +2077,7 @@ function renderHome(){
     <section class="hero">
       <div>
         <h2>전공 수업, 자료에서 시험까지 한 자리에서</h2>
-        <p>강의 PDF·슬라이드를 올리면 <b>공부 노트</b>로 정리하고, <b>암기카드</b>와 <b>시험 문제</b>를 만들고, 틀린 문제는 <b>오답노트</b>에 모아 다시 풀어요.
+        <p>강의 PDF·슬라이드를 올리면 <b>공부 노트</b>로 정리하고, <b>암기카드</b>와 <b>시험 문제</b>를 만들고, 틀린 문제는 <b>오답노트</b>에 모아 다시 풀어요. 강연 보고서·리포트·발표 자료 같은 <b>과제 초안</b>도 만들어 Word·PowerPoint로 내보내요. 올린 원본 파일은 그대로 보관돼요.
         연구 허브의 라이브러리 논문도 그대로 수업 자료로 가져옵니다.</p>
       </div>
       <div class="card"><div class="pad">
@@ -1453,6 +2086,7 @@ function renderHome(){
           <div class="stat"><b>${S.mats.length}</b><span>자료</span></div>
           <div class="stat"><b>${noted}</b><span>공부 노트</span></div>
           <div class="stat"><b>${S.quizzes.length}</b><span>퀴즈</span></div>
+          <div class="stat"><b>${S.docs.length}</b><span>만든 자료</span></div>
           <div class="stat"><b>${S.wrong.length}</b><span>오답</span></div>
         </div>
         ${rate!=null?`<p class="small muted" style="margin:0">평균 정답률 <b class="mono">${rate}%</b> · 푼 횟수 ${S.atts.length}회</p>`:""}
@@ -1537,6 +2171,7 @@ function renderLib(){
           ${m.week?`<span class="pill pl">${esc(m.week)}주차</span>`:""}
           ${m.notes?`<span class="tag ok">노트</span>`:`<span class="tag">노트 없음</span>`}
           ${(m.cards||[]).length?`<span class="tag ft">카드 ${m.cards.length}</span>`:""}
+          ${m.file?`<span class="tag" title="${esc(m.file.name)}">원본 ${fmtBytes(m.file.size)}</span>`:""}
           <span class="mono">${bits.join(" · ")}</span>
           <span>${fmtDate(m.createdAt)}</span>
         </div>
@@ -1559,6 +2194,7 @@ function renderLib(){
       <button class="btn sm primary" type="button" data-sq>퀴즈 만들기</button>
       <button class="btn sm" type="button" data-sn>노트 만들기</button>
       ${S.sel.size>1?`<button class="btn sm" type="button" data-ss>통합 노트</button>`:""}
+      <button class="btn sm" type="button" data-smk>자료 만들기</button>
       <button class="btn sm" type="button" data-sc>과목 지정</button>
       <button class="btn sm" type="button" data-sx>선택 해제</button>`;
     document.body.appendChild(bar);
@@ -1571,12 +2207,14 @@ function renderLib(){
       for(const id of S.sel){const m=getMat(id);if(m){m.course=v;await Store.put("mat",m).catch(()=>{});}}
       S.sel.clear();render();};
     bar.querySelector("[data-sx]").onclick=()=>{S.sel.clear();render();};
+    bar.querySelector("[data-smk]").onclick=()=>{const ids=[...S.sel];S.sel.clear();startMakeFrom(ids);};
   }
 }
 
 /* ---------- 자료 상세 ---------- */
 function renderMat(){
   const m=getMat(S.matId);
+  if(S.fileHave===null&&!S._fhBusy){S._fhBusy=1;refreshFileHave().then(()=>{S._fhBusy=0;softRender();});}
   if(!m){S.view="lib";return render();}
   const streaming=S.stream[m.id];
   const tabs=[["notes","공부 노트"],["cards","암기카드",(m.cards||[]).length],["ask","질문하기"],["raw","원문"]];
@@ -1619,7 +2257,18 @@ function renderMat(){
           <div class="row"><button class="btn primary" type="button" data-act="ask">보내기</button>
             ${log.length?`<button class="btn sm" type="button" data-act="askClear">대화 지우기</button>`:""}</div></div>
       </div>`;}
+    const have=S.fileHave&&S.fileHave.has(m.id);
+    const ext=((m.file&&m.file.name)||"").split(".").pop().slice(0,4).toUpperCase()||"FILE";
+    const orig=m.kind==="synthesis"?"":m.file?`<div class="origbox"><span class="ic">${esc(ext)}</span>
+        <div class="grow"><div class="nm">${esc(m.file.name)}</div>
+          <div class="tiny muted">${fmtBytes(m.file.size)} · ${have?"이 브라우저에 보관 중":S.fileHave?"이 브라우저에는 없어요 — 원본을 올린 기기에서 백업(.zip)을 가져오거나 다시 붙여 주세요":"확인 중…"}</div></div>
+        <div class="row">${have?`${ENV.embedded?"":`<button class="btn sm" type="button" data-act="origOpen">열기</button>`}<button class="btn sm primary" type="button" data-act="origSave">원본 내려받기</button>`
+          :`<button class="btn sm" type="button" data-act="origAttach">원본 다시 붙이기</button>`}</div></div>`
+      :`<div class="origbox"><span class="ic">—</span><div class="grow"><div class="nm">보관된 원본이 없어요</div>
+        <div class="tiny muted">${m.kind==="paste"||m.kind==="paper"?"붙여넣거나 허브에서 가져온 자료라 원본 파일이 없어요. 파일이 있으면 붙여 둘 수 있어요.":m.fileErr?esc(m.fileErr):"원본 보관 기능이 생기기 전에 올린 자료예요. 원본 파일을 붙여 두면 함께 보관돼요."}</div></div>
+        <div class="row"><button class="btn sm" type="button" data-act="origAttach">원본 파일 붙이기</button></div></div>`;
     return `<div class="vstack">
+      ${orig}
       <p class="small muted" style="margin:0">자료에서 뽑은 글자 ${(m.chars||0).toLocaleString()}자${m.pages?` · ${m.pages}쪽`:""}</p>
       <div class="raw" id="rawBody">읽는 중…</div>
       <div class="row"><button class="btn sm" type="button" data-act="rawCopy">원문 복사</button>
@@ -1645,6 +2294,7 @@ function renderMat(){
         ${jobTag(m.id)}
         <div class="actions">
           <button class="btn primary" type="button" data-act="quiz">이 자료로 퀴즈</button>
+          <button class="btn" type="button" data-act="make">과제·발표 만들기</button>
           ${m.notes?`<button class="btn" type="button" data-act="regen">노트 다시 만들기</button>`:`<button class="btn" type="button" data-act="notes">공부 노트 만들기</button>`}
           ${m.notes?`<button class="btn" type="button" data-act="copyNotes">노트 복사</button>
             <button class="btn" type="button" data-act="saveNotes">.md 저장</button>
@@ -1695,6 +2345,10 @@ async function matAct(m,act){
   if(act==="askClear"){delete S.chat[m.id];return render();}
   if(act==="rawCopy")return copyText(await loadText(m));
   if(act==="rawSave")return download(`${m.title.replace(/[\\/:*?"<>|]/g,"_")}-원문.txt`,await loadText(m));
+  if(act==="make")return startMakeFrom([m.id]);
+  if(act==="origSave")return openOriginal(m,"save");
+  if(act==="origOpen")return openOriginal(m,"open");
+  if(act==="origAttach"){S.origFor=m.id;return $("#origIn").click();}
 }
 
 /* ---------- 퀴즈 목록 ---------- */
@@ -2089,8 +2743,10 @@ function openSettings(){
         <textarea id="stCourse" placeholder="예: 약학대학 석박사통합과정. 약물전달·나노의약품 중심으로, 기전과 응용을 함께 묻는 문제를 선호">${esc(cfg.course||"")}</textarea></label>
     </div>
     <div class="fbox"><h3>자료 보관</h3>
-      <p class="small muted" style="margin:0">지금 ${ENV.storage==="cloud"?"claude.ai 계정에 저장":ENV.storage==="browser"?"이 브라우저에 저장":"임시 저장(창을 닫으면 사라짐)"} · 자료 ${S.mats.length}건 · 퀴즈 ${S.quizzes.length}개</p>
-      <div class="row"><button class="btn sm" type="button" id="stExp">백업 내려받기</button>
+      <p class="small muted" style="margin:0">지금 ${ENV.storage==="cloud"?"claude.ai 계정에 저장":ENV.storage==="browser"?"이 브라우저에 저장":"임시 저장(창을 닫으면 사라짐)"} · 자료 ${S.mats.length}건 · 퀴즈 ${S.quizzes.length}개 · 만든 자료 ${S.docs.length}개</p>
+      <p class="small muted" style="margin:0" id="stUse">원본 보관 현황 확인 중…</p>
+      <div class="row"><button class="btn sm primary" type="button" id="stExpZ">백업 .zip (원본 포함)</button>
+        <button class="btn sm" type="button" id="stExp">가벼운 백업 .json</button>
         <button class="btn sm" type="button" id="stImp">백업 가져오기</button>
         <button class="btn sm danger" type="button" id="stWipe">전부 지우기</button></div>
     </div>
@@ -2107,11 +2763,15 @@ function openSettings(){
       try{localStorage.setItem("hub:theme",v);}catch(e){}
       if(v==="auto")document.documentElement.removeAttribute("data-theme");else document.documentElement.dataset.theme=v;});
     $("#stExp",w).onclick=exportBackup;
+    $("#stExpZ",w).onclick=exportBackupZip;
+    storageInfo().then(i=>{const el=$("#stUse",w);if(!el)return;
+      el.innerHTML=`원본 파일 <b class="mono">${i.n}</b>개 · <b class="mono">${fmtBytes(i.bytes)}</b> 보관 중${i.used!=null?` · 이 사이트가 쓰는 공간 ${fmtBytes(i.used)}${i.quota?` / 쓸 수 있는 공간 약 ${fmtBytes(i.quota)}`:""}`:""}${i.persisted?" · 브라우저가 지우지 않도록 고정됨":""}`;});
     $("#stImp",w).onclick=()=>{close();$("#jsonIn").click();};
     $("#stWipe",w).onclick=async()=>{
-      if(!await confirmBox("자료·노트·퀴즈·오답노트를 모두 지울까요? 되돌릴 수 없어요.","전부 지우기"))return;
+      if(!await confirmBox("자료·원본 파일·노트·퀴즈·오답노트·만든 자료를 모두 지울까요? 되돌릴 수 없어요. 먼저 백업 .zip을 받아 두세요.","전부 지우기"))return;
       for(const c of COLS){const l=await Store.list(c).catch(()=>[]);for(const x of l)await Store.del(c,x.id).catch(()=>{});}
-      S.mats=[];S.quizzes=[];S.atts=[];S.wrong=[];S.texts={};S.sel.clear();
+      await FileStore.clear().catch(()=>{});
+      S.mats=[];S.quizzes=[];S.atts=[];S.wrong=[];S.docs=[];S.docId=null;S.texts={};S.sel.clear();S.fileHave=new Set();
       close();go("home");toast("모두 지웠어요");};
     w.querySelector("[data-x]").onclick=close;
     w.querySelector("[data-ok]").onclick=()=>{
@@ -2171,6 +2831,9 @@ function wire(){
   $("#fileIn").addEventListener("change",()=>{
     const f=[...($("#fileIn").files||[])];$("#fileIn").value="";
     if(!f.length){toast("고른 파일이 없어요");return;}handleFiles(f);});
+  $("#origIn").addEventListener("change",()=>{
+    const f=($("#origIn").files||[])[0];$("#origIn").value="";
+    const m=getMat(S.origFor);S.origFor=null;if(f&&m)attachOriginal(m,f);});
   $("#jsonIn").addEventListener("change",()=>{
     const f=($("#jsonIn").files||[])[0];$("#jsonIn").value="";
     if(f)importBackupJson(f);});
@@ -2218,11 +2881,12 @@ function wire(){
 }
 async function loadAll(){
   try{
-    const [m,q,a,w]=await Promise.all(["mat","quiz","att","wrong"].map(c=>Store.list(c)));
+    const [m,q,a,w,d]=await Promise.all(["mat","quiz","att","wrong","doc"].map(c=>Store.list(c)));
     S.mats=(m||[]).filter(x=>x&&x.id).sort((x,y)=>(y.createdAt||0)-(x.createdAt||0));
     S.quizzes=(q||[]).filter(x=>x&&x.id&&x.questions).sort((x,y)=>(y.createdAt||0)-(x.createdAt||0));
     S.atts=(a||[]).filter(x=>x&&x.id).sort((x,y)=>(y.at||0)-(x.at||0));
     S.wrong=(w||[]).filter(x=>x&&x.id&&x.q).sort((x,y)=>(y.addedAt||0)-(x.addedAt||0));
+    S.docs=(d||[]).filter(x=>x&&x.id&&typeof x.text==="string").sort((x,y)=>(y.updatedAt||y.createdAt||0)-(x.updatedAt||x.createdAt||0));
   }catch(e){toast("저장된 자료를 불러오지 못했어요: "+errMsg(e),5000);}
 }
 (async function boot(){
@@ -2241,6 +2905,7 @@ async function loadAll(){
   await Store.init();
   await loadAll();
   S.loaded=true;render();
+  refreshFileHave().then(()=>softRender());
   /* 허브 라이브러리는 조용히 한 번 확인해 홈에 상태로 보여 줘요 */
   hubPapersFromIdb().then(r=>{
     const l=(r.list||[]).filter(p=>p&&p.title&&!p.derived);
