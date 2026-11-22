@@ -1023,7 +1023,7 @@ async function editMat(id){
   const m=getMat(id);if(!m)return;
   modal(`<header><h2>자료 정보</h2></header><div class="body">
     <label class="field"><span class="lab">제목</span><input id="emT" value="${esc(m.title)}"></label>
-    <label class="field"><span class="lab">과목</span><input id="emC" value="${esc(m.course||"")}" placeholder="예: 약물전달학" list="courseList"></label>
+    <label class="field"><span class="lab">과목</span><input id="emC" value="${esc(m.course||"")}" placeholder="예: 생화학" list="courseList"></label>
     <datalist id="courseList">${courseNames().map(c=>`<option value="${esc(c)}">`).join("")}</datalist>
     <label class="field"><span class="lab">주차</span><input id="emW" value="${esc(m.week||"")}" placeholder="예: 7"></label>
     <label class="field"><span class="lab">메모</span><textarea id="emM" placeholder="시험 범위, 교수님 강조 등">${esc(m.memo||"")}</textarea></label>
@@ -1079,7 +1079,7 @@ function openQuizSetup(ids){
       <small class="muted">여러 자료의 내용을 함께 알아야 풀 수 있는 문제예요.</small></div>`:""}
     <div class="field"><span class="lab">방식</span>${seg("mode",["practice","exam"],["연습 (바로 채점)","시험 (끝나고 채점)"])}</div>
     <div class="field" id="timeF" hidden><span class="lab">제한 시간</span>${seg("time",[0,10,20,30,60],["없음","10분","20분","30분","60분"])}</div>
-    <label class="field"><span class="lab">특히 집중할 주제 (선택)</span><input id="qFocus" placeholder="예: 신장 손상 기전, 약물전달 전략"></label>
+    <label class="field"><span class="lab">특히 집중할 주제 (선택)</span><input id="qFocus" placeholder="예: 효소 반응속도론, 수용체 신호전달"></label>
     ${S.wrong.length?`<label class="field" style="flex-direction:row;align-items:center;gap:8px"><input type="checkbox" id="qAvoid" checked style="width:auto"><span>오답노트에서 틀린 개념을 더 많이 내기</span></label>`:""}
   </div><footer><button class="btn" data-x type="button">취소</button><button class="btn primary" data-go type="button">문제 만들기</button></footer>`,
   (w,close)=>{
@@ -1427,7 +1427,7 @@ function exportBackup(){
 const TPL={
   lecture:{name:"강연·수업 보고서",desc:"A4 1장 · 강의내용 및 배운점 / 고찰",len:"one",tone:"report",cite:false,human:true,needMemo:true,
     memoLabel:"내 메모 — 강연을 들으며 적은 것 (이걸 중심으로 직접 쓴 글처럼 재구성해요)",
-    topicPh:"예: 11주차 초청강연 — 나노의약품의 신장 표적 전달 (OO제약 김OO 박사)",
+    topicPh:"예: 11주차 초청강연 — 항생제 내성의 기전과 신약 개발 (OO제약 김OO 박사)",
     rule:`형식(이 두 파트만, 제목 그대로):
 # (강연 제목) — (연사·소속, 알 수 있으면)
 ## 강의내용 및 배운점
@@ -1437,7 +1437,7 @@ const TPL={
 - 반드시 A4 한 장 안에 들어가야 합니다(공백 포함 1,400~1,700자). 넘치면 줄이세요.
 - 내 메모에 없는 개인 경험·감정·대화를 지어내지 마세요.`},
   report:{name:"과제 리포트",desc:"서론 · 본론 · 결론 · 참고자료",len:"two",tone:"report",cite:true,human:true,
-    memoLabel:"내 생각·메모 (선택 — 주장의 방향이나 꼭 넣을 내용)",topicPh:"예: 신장 표적 약물전달 전략의 현재와 한계를 논하시오",
+    memoLabel:"내 생각·메모 (선택 — 주장의 방향이나 꼭 넣을 내용)",topicPh:"예: 항체 의약품의 반감기 연장 전략을 비교하여 논하시오",
     rule:`형식:
 # 제목
 ## 1. 서론
@@ -1449,7 +1449,7 @@ const TPL={
 ## 참고자료
 아래 자료 목록의 서지만, 본문에 쓴 순서대로 번호를 매겨 쓰세요.`},
   slides:{name:"발표 자료",desc:"슬라이드별 제목 · 핵심 · 발표자 노트 → PPTX",len:"s12",tone:"bullet",cite:false,human:false,
-    memoLabel:"내 생각·메모 (선택 — 강조하고 싶은 메시지, 발표 시간 등)",topicPh:"예: 랩미팅 발표 — AKI 모델에서 초분자 나노입자 효능",
+    memoLabel:"내 생각·메모 (선택 — 강조하고 싶은 메시지, 발표 시간 등)",topicPh:"예: 세미나 발표 — CRISPR 유전자 편집의 치료 응용",
     rule:`각 슬라이드를 정확히 이 형식으로 쓰세요:
 # 발표 제목
 ## 슬라이드 1. 슬라이드 제목
@@ -1469,7 +1469,7 @@ const TPL={
 ## 자주 틀리는 함정
 - 군더더기 없이, 표와 글머리표를 적극적으로.`},
   journal:{name:"논문 발제",desc:"배경 · 주장 · 방법 · 결과 · 비판 · 토론 질문",len:"two",tone:"bullet",cite:true,human:false,
-    memoLabel:"내 생각·메모 (선택 — 비판하고 싶은 점, 내 연구와의 연결)",topicPh:"예: 저널클럽 발제 — 2025 Nature Nanotechnology 신장 표적 나노입자",
+    memoLabel:"내 생각·메모 (선택 — 비판하고 싶은 점, 내 연구와의 연결)",topicPh:"예: 저널클럽 발제 — 장내 미생물과 면역 반응에 관한 최근 논문",
     rule:`형식:
 # 논문 제목 (저널, 연도)
 ## 연구 배경과 질문
@@ -1480,7 +1480,7 @@ const TPL={
 ## 비판적 검토 — 방법의 한계, 다른 해석 가능성, 추가로 필요한 실험
 ## 토론 질문 — 5개`},
   review:{name:"문헌 리뷰",desc:"여러 자료를 주제로 엮고 출처 표시",len:"three",tone:"report",cite:true,human:true,
-    memoLabel:"내 생각·메모 (선택 — 리뷰의 관점, 강조할 흐름)",topicPh:"예: 급성신장손상 표적 나노의약품 연구 동향",
+    memoLabel:"내 생각·메모 (선택 — 리뷰의 관점, 강조할 흐름)",topicPh:"예: 알츠하이머병 표적 치료제 연구 동향",
     rule:`형식:
 # 제목
 ## 서론 — 범위, 검토 기준, 왜 이 주제인지
@@ -1489,7 +1489,7 @@ const TPL={
 ## 연구 공백과 향후 방향
 ## 참고자료 — 아래 자료 목록의 서지만, 번호 순`},
   lab:{name:"실험 보고서",desc:"목적 · 원리 · 재료와 방법 · 결과 · 고찰",len:"two",tone:"report",cite:true,human:true,needMemo:true,
-    memoLabel:"실험 메모·데이터 (결과는 여기 적힌 것만 써요 — 수치, 관찰, 조건)",topicPh:"예: BCA assay로 나노입자 단백질 정량",
+    memoLabel:"실험 메모·데이터 (결과는 여기 적힌 것만 써요 — 수치, 관찰, 조건)",topicPh:"예: BCA assay로 시료 단백질 정량",
     rule:`형식:
 # 실험 제목
 ## 1. 목적
@@ -1806,7 +1806,7 @@ function renderMake(){
       <label class="field"><span class="lab">${f.tpl==="free"?"요청 — 무엇을 어떤 양식으로 만들지":"주제·과제 내용"}</span>
         ${f.tpl==="free"?`<textarea id="mkTopic" placeholder="${esc(T.topicPh)}">${esc(f.topic)}</textarea>`:`<input id="mkTopic" value="${esc(f.topic)}" placeholder="${esc(T.topicPh)}">`}</label>
       <label class="field"><span class="lab">${esc(T.memoLabel)}</span>
-        <textarea id="mkMemo" style="min-height:${T.needMemo?160:100}px" placeholder="${f.tpl==="lecture"?"예: 신장은 나노입자 크기 의존적으로 걸러짐 — 6nm 이하는 사구체 통과 / 연사가 강조: 전임상→임상 간극 / 내 연구(ertiprotafib)에 적용? 등 생각나는 대로":f.tpl==="lab"?"예: 시료 A 흡광도 0.512, 0.498, 0.505 / BSA 표준곡선 R²=0.997 / 37°C 30분 반응":""}">${esc(f.memo)}</textarea></label>
+        <textarea id="mkMemo" style="min-height:${T.needMemo?160:100}px" placeholder="${f.tpl==="lecture"?"예: 내성 경로는 효소 분해·표적 변이·배출 펌프 / 연사가 강조: 신약 파이프라인 고갈 / 내 전공에 적용해 볼 점? 등 생각나는 대로":f.tpl==="lab"?"예: 시료 A 흡광도 0.512, 0.498, 0.505 / BSA 표준곡선 R²=0.997 / 37°C 30분 반응":""}">${esc(f.memo)}</textarea></label>
       <div class="field"><span class="lab">근거 자료 (선택) — ${f.ids.size?`<b>${f.ids.size}개</b> 골랐어요`:"고르지 않으면 메모와 일반 지식으로만 써요"}</span>
         ${S.mats.length?Object.entries(groups).map(([c,arr])=>`<div style="display:flex;flex-direction:column;gap:6px;margin-top:4px">
           <span class="tiny muted">${esc(c)}</span>
@@ -1900,7 +1900,7 @@ function renderDoc(host,d){
     ${S.docEdit||!d.text?"":`<section class="card noprint"><div class="pad">
       <span class="cap">고쳐 쓰기</span>
       <div class="chips">${quick.map(q=>`<button class="chip" type="button" data-q="${esc(q)}"${busy?" disabled":""}>${esc(q)}</button>`).join("")}</div>
-      <div class="row"><input class="search" id="revIn" style="flex:1;min-width:200px" placeholder="예: 두 번째 문단을 내 연구(신장 표적 나노입자)와 더 연결해 줘">
+      <div class="row"><input class="search" id="revIn" style="flex:1;min-width:200px" placeholder="예: 두 번째 문단을 내 전공 분야와 더 연결해 줘">
         <button class="btn primary" type="button" data-rev${busy?" disabled":""}>고쳐 쓰기</button></div>
     </div></section>`}`;
   paintCount(text,d);
@@ -2765,7 +2765,7 @@ function openSettings(){
       <label class="field"><span class="lab">연구 허브 주소 (헤더 바로가기에만 씁니다)</span>
         <input id="stHub" value="${esc(cfg.hubUrl||"")}" placeholder="예: https://아이디.github.io/research-hub/"></label>
       <label class="field"><span class="lab">내 전공·수업 맥락 (노트와 문제에 반영)</span>
-        <textarea id="stCourse" placeholder="예: 약학대학 석박사통합과정. 약물전달·나노의약품 중심으로, 기전과 응용을 함께 묻는 문제를 선호">${esc(cfg.course||"")}</textarea></label>
+        <textarea id="stCourse" placeholder="예: 생명과학 대학원 과정. 기전과 응용을 함께 묻는 문제를 선호">${esc(cfg.course||"")}</textarea></label>
     </div>
     <div class="fbox"><h3>자료 보관</h3>
       <p class="small muted" style="margin:0">지금 ${ENV.storage==="cloud"?"claude.ai 계정에 저장":ENV.storage==="browser"?"이 브라우저에 저장":"임시 저장(창을 닫으면 사라짐)"} · 자료 ${S.mats.length}건 · 퀴즈 ${S.quizzes.length}개 · 만든 자료 ${S.docs.length}개</p>

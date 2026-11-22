@@ -1,4 +1,4 @@
-# 전공 공부나 시험 대비를 하고 싶은 학생! 수업 자료를 만들고 싶은 교수님! 그 모두를 위해 준비한 학습 자료 플랫폼 '전공 학습실'
+# 전공 학습실
 
 전공 수업 자료로 **공부 노트 → 암기카드 → 시험 문제 → 오답노트**를 만들고, 강연 보고서·리포트·발표 자료 같은 **과제 초안**까지 만드는 정적 웹앱입니다. 서버도 빌드도 없이 `index.html` 하나로 동작합니다.
 
@@ -72,7 +72,7 @@
 ## GitHub Pages로 올리기
 
 1. GitHub에서 **New repository** → 이름 예: `study-room` → **Public** → Create
-2. **Add file → Upload files**에서 이 폴더의 `index.html`·`README.md`를 끌어다 놓고 **Commit changes**
+2. **Add file → Upload files**에서 이 폴더의 `index.html`·`README.md`·`LICENSE`를 끌어다 놓고 **Commit changes**
 3. **Settings → Pages** → Source `Deploy from a branch`, Branch `main` / `(root)` → Save
 4. 1~2분 뒤 `https://<아이디>.github.io/study-room/` 에서 열립니다
 
@@ -124,9 +124,10 @@
 ├── index.html    전공 학습실 (단일 파일)
 ├── .nojekyll     GitHub Pages의 Jekyll 처리 끄기
 ├── .gitignore    백업 파일(.json·.zip)은 올리지 않음
+├── LICENSE       MIT License
 └── README.md
 ```
 
----
+## 라이선스
 
-제작 — 신동원 · 고려대학교 대학원
+[MIT License](LICENSE) — 자유롭게 쓰고, 고치고, 나눠도 됩니다. 복사본에 저작권 표시와 라이선스 문구만 함께 두세요.
